@@ -7,10 +7,12 @@ import re
 import sys
 from html.parser import HTMLParser
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 TRENDING_URL = "https://github.com/trending?since=daily"
 KEYWORD = "ai"
 TOP_N = 15
+README_MAX_CHARS = 4000
 
 class TrendingParser(HTMLParser):
     def __init__(self):
@@ -87,6 +89,61 @@ def filter_ai(items):
     return result
 
 
+def fetch_readme(repo):
+    for branch in ["main", "master"]:
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/README.md"
+        try:
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            data = urlopen(req, timeout=15).read().decode("utf-8", errors="ignore")
+            return data[:README_MAX_CHARS]
+        except HTTPError:
+            continue
+        except Exception:
+            continue
+    return ""
+
+
+def extract_section(text, patterns):
+    if not text:
+        return ""
+    lines = text.splitlines()
+    indices = []
+    for i, line in enumerate(lines):
+        if any(re.search(p, line, re.I) for p in patterns):
+            indices.append(i)
+    if not indices:
+        return ""
+    start = indices[0]
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if re.match(r"^#", lines[j]):
+            end = j
+            break
+    snippet = "\n".join(lines[start:end]).strip()
+    snippet = re.sub(r"`{3}[\s\S]*?`{3}", "", snippet)
+    snippet = re.sub(r"`[^`]+`", "", snippet)
+    snippet = re.sub(r"\s+", " ", snippet)
+    return snippet[:400]
+
+
+def summarize_repo_cn(repo, desc):
+    readme = fetch_readme(repo)
+    install = extract_section(readme, [r"installation", r"install", r"setup", r"快速开始", r"安装"])
+    usage = extract_section(readme, [r"usage", r"getting started", r"example", r"使用", r"用法", r"quickstart"])
+    intro = extract_section(readme, [r"^#", r"简介", r"about", r"overview"]) or desc
+
+    scenario = "适合开发者进行 AI 项目实验或快速集成" if desc else "适合开发者进行 AI 项目实验或快速集成"
+    meaning = "提升开发效率或增强 AI 能力的开源项目" if desc else "提供可复用的 AI 能力或工具"
+
+    return {
+        "intro": intro.strip() if intro else desc,
+        "install": install,
+        "usage": usage,
+        "scenario": scenario,
+        "meaning": meaning,
+    }
+
+
 def build_markdown(items, date_str):
     lines = []
     lines.append(f"# GitHub AI Trending 日报 - {date_str}")
@@ -103,9 +160,16 @@ def build_markdown(items, date_str):
         repo = it["repo"]
         desc = it.get("desc", "").strip()
         url = f"https://github.com/{repo}"
+        summary = summarize_repo_cn(repo, desc)
         lines.append(f"{i}. [{repo}]({url})")
-        if desc:
-            lines.append(f"   - {desc}")
+        if summary.get("intro"):
+            lines.append(f"   - 简介：{summary['intro']}")
+        lines.append(f"   - 适合场景：{summary['scenario']}")
+        if summary.get("install"):
+            lines.append(f"   - 安装方式：{summary['install']}")
+        if summary.get("usage"):
+            lines.append(f"   - 使用方式：{summary['usage']}")
+        lines.append(f"   - 项目意义：{summary['meaning']}")
     lines.append("")
     lines.append("---")
     lines.append("生成时间（本地）：" + dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
