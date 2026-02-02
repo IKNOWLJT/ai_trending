@@ -1,0 +1,32 @@
+name: Daily AI Trending
+
+on:
+  schedule:
+    - cron: "30 12 * * *" # 20:30 Asia/Shanghai
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run fetcher
+        run: |
+          python scripts/fetch_trending.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "ai-trending-bot"
+          git config user.email "ai-trending-bot@users.noreply.github.com"
+          git add reports README.md
+          git commit -m "chore: daily AI trending" || echo "nothing to commit"
+          git push
